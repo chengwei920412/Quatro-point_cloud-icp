@@ -1,0 +1,11 @@
+<launch>
+  <!-- Headless variant of quatro.launch (no rviz). Used by docker/run.sh test
+       and by anyone who just wants the registration result without the GUI. -->
+
+  <rosparam command="load" file="$(find quatro)/config/params.yaml" />
+  <rosparam command="load" file="$(find quatro)/config/patchwork_params.yaml" />
+
+  <node name="run_example" pkg="quatro" type="run_example" output="screen" required="true">
+    <rosparam param="/algorithm">"quatro"</rosparam>
+  </node>
+</launch>

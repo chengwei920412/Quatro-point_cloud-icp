@@ -250,6 +250,16 @@ int main(int argc, char **argv) {
     std::cout << setprecision(4) << "\033[1;32mTotal takes: " << sec.count() << " sec. ";
     std::cout << "(Setting matching pairs: " << sec.count() - optim_sec.count() << " sec. + Quatro: " << optim_sec.count() << " sec.)\033[0m" << std::endl;
 
+    // Single-line, grep-able dump of the estimated 4x4 transform.
+    // Format: `[QUATRO_OUTPUT] m00 m01 ... m33` (row-major).
+    std::cout << "[QUATRO_OUTPUT]";
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            std::cout << " " << output(r, c);
+        }
+    }
+    std::cout << std::endl;
+
     /**
      * Below codes are for visualization
      */
