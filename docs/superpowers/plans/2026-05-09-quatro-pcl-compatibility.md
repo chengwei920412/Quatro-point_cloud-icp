@@ -6,11 +6,28 @@
 
 **Architecture:** Refactor `include/quatro.hpp` in place. Move PCL utility code (`voxelize`) into a new `include/quatro/pcl_compat.hpp`. Extract the existing algorithm core into a private helper, then expose two thin entry points: the PCL virtual `computeTransformation(PointCloudSource&, const Matrix4&)` (new, enables `align()`) and the legacy `computeTransformation(Eigen::Matrix4d&)` (kept for back-compat). Both populate `final_transformation_` so `getFinalTransformation()` works after either call. The algorithm's internal math stays in `double`; only public boundary types use the `Scalar` template parameter.
 
-**Tech Stack:** C++17, PCL 1.10+, Eigen 3.2+, Boost, OpenMP, catkin (ROS Melodic / Noetic compatible).
+**Tech Stack:** C++17, PCL 1.10+, Eigen 3.2+, Boost, OpenMP, catkin (ROS Noetic verified).
 
 **Reference design:** `docs/superpowers/specs/2026-05-09-quatro-pcl-compatibility-design.md`
 
-**Build environment assumption:** ROS catkin workspace (Ubuntu 18.04 / 20.04 / 22.04 with corresponding ROS distro). All build/run verifications below run inside `catkin build quatro` and `roslaunch quatro quatro.launch`. If the executing engineer is on macOS or another non-ROS host, the verification steps must be performed on a Linux host with ROS installed (a Docker container is acceptable).
+**Build / verify environment:** Every build and runtime check goes through the Docker harness committed at `docker/`:
+
+| Command | What it does |
+|---------|--------------|
+| `./docker/run.sh build-image` | Build the `quatro-dev:noetic` image (one-time, ~1 min after base pulled). |
+| `./docker/run.sh build-pkg`  | `catkin build quatro` inside the container; uses named volumes for incremental builds across runs. |
+| `./docker/run.sh test`       | `catkin build quatro` + headless `roslaunch quatro_headless.launch` with a timeout. Prints `[QUATRO_OUTPUT] m00 m01 ... m33` on a single grep-able line. |
+| `./docker/run.sh shell`      | Interactive shell inside the container for debugging. |
+| `./docker/run.sh clean`      | Remove the named volumes (forces a clean build next time). |
+
+The reference output for the bundled `000540.bin` / `001319.bin` toy pair is committed at `docker/baseline_transform.txt`. Every task verifies behavior with:
+
+```bash
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+```
+
+Empty diff + `REGRESSION OK` print = pass. Any difference = fail.
 
 ---
 
@@ -18,67 +35,51 @@
 
 | Path | Status | Responsibility |
 |------|--------|----------------|
-| `include/quatro/pcl_compat.hpp` | NEW | PCL smart-pointer-version-agnostic utilities. Today: `voxelize<T>(...)`. Designed to grow as more PCL utilities are extracted. |
-| `include/quatro.hpp` | MODIFIED | The `Quatro<PointSource, PointTarget, Scalar>` class. PCL `Registration` derivative. Header hygiene cleaned up. Algorithm core extracted into a private helper. |
-| `examples/run_global_registration.cpp` | MODIFIED | Demo. Switched to `quatro.align(...)` + `getFinalTransformation()` (the PCL-idiomatic flow). Legacy call documented in a comment. |
+| `include/quatro/pcl_compat.hpp` | NEW | PCL smart-pointer-version-agnostic utilities. Today: `voxelize<T>(...)` overloads. |
+| `include/quatro.hpp` | MODIFIED | The `Quatro<PointSource, PointTarget, Scalar>` class. PCL `Registration` derivative. Header hygiene cleaned up. Algorithm core extracted into a private helper. Real PCL virtual override added. |
+| `examples/run_global_registration.cpp` | MODIFIED | `voxelize` callers re-qualified to `quatro::voxelize<T>(...)`. Switched to `quatro.align(...)` + `getFinalTransformation()` for the registration call. Legacy call documented in a comment. |
 | `CMakeLists.txt` | MODIFIED | PCL minimum version bumped 1.8 → 1.10. `${PCL_LIBRARY_DIRS}` typo fixed to `${PCL_LIBRARIES}`. |
-| `materials/baseline_transform.txt` | NEW (transient) | Baseline reference output captured before refactor; used as the regression check oracle. Removed at end of plan. |
 
-Files explicitly NOT touched in this plan: `include/conversion.hpp`, `include/fpfh_manager.hpp`, `include/imageProjection.hpp`, `include/patchwork.hpp`, `include/utility.h`, `include/teaser/**`, `include/teaser_utils/**`, `src/**`, `package.xml`, `3rdparty/**`, `config/**`, `launch/**`, `rviz/**`, `msg/**`.
+Already in place from the harness commit (`197b638`):
+- `docker/Dockerfile`, `docker/run.sh`, `docker/baseline_transform.txt`
+- `launch/quatro_headless.launch`
+- `[QUATRO_OUTPUT]` print in `examples/run_global_registration.cpp`
+
+Files explicitly NOT touched in this plan: `include/conversion.hpp`, `include/fpfh_manager.hpp`, `include/imageProjection.hpp`, `include/patchwork.hpp`, `include/utility.h`, `include/teaser/**`, `include/teaser_utils/**`, `src/**`, `package.xml`, `3rdparty/**`, `config/**`, `launch/quatro.launch`, `rviz/**`, `msg/**`, `materials/**`.
 
 ---
 
-## Task 1: Capture baseline behavior (regression oracle)
+## Task 1: Sanity-check the Docker harness against baseline
 
-**Why this task exists:** The codebase has no unit tests. Our verification model is "the example produces the same numerical output before and after." We need to record the "before" output now so later tasks can check against it.
-
-**Files:**
-- Create: `materials/baseline_transform.txt` (transient, removed in Task 8)
+**Why:** Confirms the harness still works on this branch before any code changes. If this fails, the rest of the plan can't be verified.
 
 **Steps:**
 
-- [ ] **Step 1.1: Build the repo at the current commit**
+- [ ] **Step 1.1: Make sure the image is built**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro
+./docker/run.sh build-image
 ```
 
-Expected: build succeeds. If it does not, capture the failure — the `boost::shared_ptr` issues from the spec may already be biting. Note the failure and proceed; the refactor will fix it. (In that case, skip Step 1.2 and Step 1.3 — record "baseline did not build on PCL <version>" in `materials/baseline_transform.txt` and use *post-refactor build success* as the verification instead.)
+If the image already exists, the Docker build is a no-op (cache hit). Output ends with `naming to docker.io/library/quatro-dev:noetic`.
 
-- [ ] **Step 1.2: Run the example**
+- [ ] **Step 1.2: Run the regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-Wait until the console prints the dashed-line summary block and the `Total takes: ... sec.` line. Press Ctrl-C to exit the visualization loop.
-
-- [ ] **Step 1.3: Capture the output transformation matrix**
-
-The example currently prints info via `std::cout`, but does not directly print the final `output` matrix. Add a *temporary* one-line print just before the `pcl::transformPointCloud(*srcRaw, aligned, output);` call in `examples/run_global_registration.cpp`:
-
-```cpp
-std::cout << "[BASELINE] output=\n" << output << std::endl;
+Expected: empty diff and `REGRESSION OK`. The exact baseline content is:
+```
+[QUATRO_OUTPUT] 0.8856 0.4644 0 -8.767 -0.4644 0.8856 0 -0.7905 0 0 1 1.132 0 0 0 1
 ```
 
-Rebuild, rerun (Steps 1.1, 1.2). Copy the printed 4x4 matrix into `materials/baseline_transform.txt`. **Then revert the temporary print** (`git checkout -- examples/run_global_registration.cpp`).
+If diff is non-empty, **stop**: either the harness is broken or the codebase has drifted from when the baseline was captured. Investigate before continuing.
 
-- [ ] **Step 1.4: Stage the baseline reference file**
+- [ ] **Step 1.3: No commit needed**
 
-```bash
-git add materials/baseline_transform.txt
-git status
-```
-
-Expected: only `materials/baseline_transform.txt` is staged.
-
-- [ ] **Step 1.5: Commit**
-
-```bash
-git commit -m "Add baseline reference output for regression check"
-```
+This task is read-only.
 
 ---
 
@@ -142,25 +143,15 @@ void voxelize(const pcl::PointCloud<PointT>& src,
 #endif  // QUATRO_PCL_COMPAT_HPP
 ```
 
-- [ ] **Step 2.3: Verify it compiles in isolation**
+- [ ] **Step 2.3: Verify the catkin build still works (no regression — nothing includes it yet)**
 
 ```bash
-cd ~/catkin_ws/src/Quatro
-g++ -std=c++17 -fsyntax-only -Iinclude $(pkg-config --cflags-only-I pcl_common-1.10 2>/dev/null || pkg-config --cflags-only-I pcl_common 2>/dev/null) include/quatro/pcl_compat.hpp 2>&1 | head -40
+./docker/run.sh build-pkg 2>&1 | tail -10
 ```
 
-Expected: empty output (clean compile). If `pkg-config` fails to find a version-suffixed name, the unsuffixed `pcl_common` should work. If both fail, fall back to relying on the catkin build in Step 2.4.
+Expected: build succeeds. Nothing in the project includes the new file yet, so behavior is unchanged.
 
-- [ ] **Step 2.4: Verify the catkin build still works (no regression)**
-
-```bash
-cd ~/catkin_ws
-catkin build quatro
-```
-
-Expected: same outcome as the baseline build in Task 1. Nothing in the project includes the new file yet, so the build is unchanged.
-
-- [ ] **Step 2.5: Commit**
+- [ ] **Step 2.4: Commit**
 
 ```bash
 git add include/quatro/pcl_compat.hpp
@@ -169,26 +160,24 @@ git commit -m "Add include/quatro/pcl_compat.hpp with PCL-version-agnostic voxel
 
 ---
 
-## Task 3: Header hygiene in `include/quatro.hpp` and example caller update
+## Task 3: Header hygiene in `include/quatro.hpp` and qualify the example's `voxelize` callers
 
 **Why:** `quatro.hpp` has `using namespace std;` and `using namespace pcl;` (forbidden in headers — pollutes every translation unit), unused ROS/system includes, and an inline `voxelize` we just moved into `namespace quatro`. Removing the inline `voxelize` will break the example's two unqualified call sites (lines 206-207 of `run_global_registration.cpp`), so this task updates them in the same commit to keep the build green.
 
 **Files:**
 - Modify: `include/quatro.hpp` (lines 10-11, 45-46, 49-68)
-- Modify: `examples/run_global_registration.cpp` (lines 206-207 — call `quatro::voxelize` instead of unqualified `voxelize`)
+- Modify: `examples/run_global_registration.cpp` (lines 206-207)
 
 **Steps:**
 
 - [ ] **Step 3.1: Remove unused system/ROS includes**
 
-In `include/quatro.hpp`, delete these two lines (currently at lines 10-11):
+In `include/quatro.hpp`, delete these two lines (currently lines 10-11):
 
 ```cpp
 #include <unistd.h>
 #include <geometry_msgs/Pose.h>
 ```
-
-(Verification: search the rest of the file for `geometry_msgs` and any POSIX-only `unistd` symbol — there should be no occurrences. If you find any, stop and consult the spec.)
 
 - [ ] **Step 3.2: Replace inline `voxelize` definitions with the new header**
 
@@ -200,7 +189,7 @@ Add this include near the other Quatro-internal includes (just below `#include "
 #include "quatro/pcl_compat.hpp"
 ```
 
-(There may also still be a `#include <pcl/filters/voxel_grid.h>` line in `quatro.hpp` — leave it alone; it's harmless and other code in the file may rely on it.)
+Leave the existing `#include <pcl/filters/voxel_grid.h>` in place; other code in the file (and in includes) may rely on it.
 
 - [ ] **Step 3.3: Remove `using namespace` directives**
 
@@ -229,11 +218,10 @@ quatro::voxelize<PointType>(tgtValidSegments, tgtFeat, voxel_size);
 
 (The explicit template arg avoids deduction ambiguity between the two overloads when the first argument is a `Ptr`.)
 
-- [ ] **Step 3.5: Restore `std::` and `pcl::` qualifications inside the file**
+- [ ] **Step 3.5: Restore `std::` and `pcl::` qualifications inside the header**
 
-The simplest way: build, read the errors, qualify each symbol the compiler complains about. Common ones to expect (do them all proactively to save round-trips):
+Build first, then qualify each unqualified symbol the compiler complains about. Common ones to qualify in `quatro.hpp` (do all proactively):
 
-In `quatro.hpp`, qualify:
 - `cout` → `std::cout`
 - `endl` → `std::endl`
 - `cerr` → `std::cerr`
@@ -248,30 +236,29 @@ In `quatro.hpp`, qualify:
 - `numeric_limits` → `std::numeric_limits`
 - `invalid_argument` → `std::invalid_argument`
 - `Registration<...>` → `pcl::Registration<...>`
-- `PointCloud<...>` → `pcl::PointCloud<...>` (where it appears bare, e.g., in `setInliers`'s parameter types — but NOT inside the class where `PointCloudSource`/`PointCloudTarget` are typedefed)
+- `PointCloud<...>` → `pcl::PointCloud<...>` (only where it appears bare; `PointCloudSource` / `PointCloudTarget` typedefs are not affected)
 - `PointXYZ` → `pcl::PointXYZ`
 - `transformPointCloud` → `pcl::transformPointCloud`
-- `VoxelGrid` → `pcl::VoxelGrid` (if any references remain after removing the inline `voxelize`)
+- `VoxelGrid` → `pcl::VoxelGrid` (if any references survived removing the inline `voxelize`)
 
 `PointType` is a project-wide typedef defined in `include/utility.h` — leave it as-is.
 
-- [ ] **Step 3.6: Build**
+- [ ] **Step 3.6: Build until clean**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro 2>&1 | tail -60
+./docker/run.sh build-pkg 2>&1 | tail -40
 ```
 
-Expected: build succeeds. If it fails, the error will name the unqualified symbol — qualify it and rebuild. Repeat until clean.
+Expected: clean build. If it fails, the error names the unqualified symbol — qualify it and rebuild. Repeat until clean.
 
-- [ ] **Step 3.7: Run the example, confirm output matches baseline**
+- [ ] **Step 3.7: Run the regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-Re-add the temporary print from Task 1.3 if you removed it, run, compare the printed `output` matrix against `materials/baseline_transform.txt`. They MUST match (deterministic algorithm, fixed input).
+Expected: empty diff and `REGRESSION OK`. If not, the qualification touched something that changed behavior — investigate.
 
 - [ ] **Step 3.8: Commit**
 
@@ -284,7 +271,7 @@ git commit -m "Clean up quatro.hpp: remove using-namespace, drop unused ROS/syst
 
 ## Task 4: Extract algorithm core into a private helper
 
-**Why:** Two public entry points (the PCL virtual override in Task 5, and the legacy method in Task 6) need to share the same algorithm body. Right now the body lives inside `computeTransformation(Eigen::Matrix4d& output)` — extracting it lets both callers reuse it without duplication.
+**Why:** Two public entry points (the PCL virtual override in Task 5, and the legacy method in Task 6) need to share the same algorithm body. Extracting it now lets both callers reuse it without duplication.
 
 **Files:**
 - Modify: `include/quatro.hpp` — extract method body, no behavior change
@@ -293,10 +280,9 @@ git commit -m "Clean up quatro.hpp: remove using-namespace, drop unused ROS/syst
 
 - [ ] **Step 4.1: Add a private helper declaration**
 
-In `include/quatro.hpp`, find the existing `private:` section near the bottom (currently at line 1059). Replace it with:
+In `include/quatro.hpp`, find the existing `private:` section near the bottom (currently around line 1059). Just below `private:`, add:
 
 ```cpp
-private:
     /** \brief Algorithm core. Computes the registration transform in
      *  double precision and writes it into `output`. Sets `solution_.valid`.
      *  Does NOT touch `final_transformation_` or `converged_` — the public
@@ -305,23 +291,25 @@ private:
     void computeQuatroTransformation_(Eigen::Matrix4d& output);
 ```
 
-- [ ] **Step 4.2: Move the existing body**
+(Since `Quatro` is a class template, both the declaration and definition live in this header.)
 
-Find the existing definition (currently `void computeTransformation(Eigen::Matrix4d &output) {` near line 769). Rename the function to `computeQuatroTransformation_` AND move its definition to just below the class (or to the very end of the file, before the `#endif`). Because Quatro is a class template, the helper must remain in the header and be defined inline (e.g., at namespace scope as a member-function template definition):
+- [ ] **Step 4.2: Move the existing body into the helper**
+
+Find the existing definition (currently `void computeTransformation(Eigen::Matrix4d &output) {` near line 769). The body starting at the next line and ending with the closing `}` of that method is the algorithm core.
+
+Move that body verbatim into a new out-of-class member-template definition, placed at the end of the file just before `#endif //QUATRO_H`:
 
 ```cpp
 template <typename PointSource, typename PointTarget, typename Scalar>
 void Quatro<PointSource, PointTarget, Scalar>::computeQuatroTransformation_(
         Eigen::Matrix4d& output) {
-    // ... existing body verbatim ...
+    // ... the existing body, verbatim ...
 }
 ```
 
-(Since `void computeTransformation(PointCloudSource &output, const Matrix4 &guess) override {};` already exists at line 767 as an empty stub, leave it for now — Task 5 will replace it.)
+- [ ] **Step 4.3: Replace the original `computeTransformation(Eigen::Matrix4d&)` body with a delegating wrapper**
 
-- [ ] **Step 4.3: Replace the original `computeTransformation(Eigen::Matrix4d&)` body with a delegating call**
-
-Where the original body used to be, leave a thin wrapper for backward compatibility:
+Where the original body used to be, leave a thin wrapper:
 
 ```cpp
 void computeTransformation(Eigen::Matrix4d& output) {
@@ -334,20 +322,20 @@ void computeTransformation(Eigen::Matrix4d& output) {
 - [ ] **Step 4.4: Build**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro 2>&1 | tail -30
+./docker/run.sh build-pkg 2>&1 | tail -20
 ```
 
-Expected: clean build. If you see "redefinition of `computeTransformation`" errors, the empty stub at line 767 is colliding — leave it; the issue is the rename. Re-check Step 4.2.
+Expected: clean build. Common errors:
+- "redefinition of `computeTransformation`" → the previously empty stub at line ~767 (`void computeTransformation(PointCloudSource &output, const Matrix4 &guess) override {};`) is fine and should be left alone; verify the rename only touched the `Eigen::Matrix4d&` overload.
 
-- [ ] **Step 4.5: Run example, verify output matches baseline**
+- [ ] **Step 4.5: Regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-Re-add the temporary `output` print from Task 1.3 if needed. Compare the printed matrix to `materials/baseline_transform.txt` — must match exactly. Refactoring without behavior change is the criterion.
+Expected: `REGRESSION OK`. Refactoring without behavior change is the criterion.
 
 - [ ] **Step 4.6: Commit**
 
@@ -360,33 +348,34 @@ git commit -m "Extract Quatro algorithm core into computeQuatroTransformation_ h
 
 ## Task 5: Implement the PCL `Registration` virtual override (enables `align()`)
 
-**Why:** `pcl::Registration::align(output)` calls `computeTransformation(PointCloudSource& output, const Matrix4& guess)` internally. The current empty-body override (`{};` at line 767) means `align()` is a no-op. We replace it with a real implementation that delegates to our core helper.
+**Why:** `pcl::Registration::align(output)` calls `computeTransformation(PointCloudSource& output, const Matrix4& guess)` internally. The current empty-body override (`{};` at line ~767) means `align()` is a no-op. We replace it with a real implementation that delegates to our core helper.
 
 **Files:**
 - Modify: `include/quatro.hpp`
 
 **Steps:**
 
-- [ ] **Step 5.1: Add `using` to expose both `computeTransformation` overloads**
+- [ ] **Step 5.1: Add `using` to expose protected base members and unhide overloads**
 
-In `include/quatro.hpp`, near the other `using Registration<...>::...` lines (currently around lines 102-104), add:
-
-```cpp
-using pcl::Registration<PointSource, PointTarget, Scalar>::final_transformation_;
-using pcl::Registration<PointSource, PointTarget, Scalar>::converged_;
-```
-
-(`final_transformation_` may already be in the using list — search before adding. `converged_` likely is not. Both are protected members of `pcl::Registration`.)
-
-Also add, to keep the legacy `computeTransformation(Eigen::Matrix4d&)` from hiding the parent's overload set:
+In `include/quatro.hpp`, near the other `using Registration<...>::...` lines (currently around lines 80-104), add (only if not already present — `grep` first):
 
 ```cpp
-using pcl::Registration<PointSource, PointTarget, Scalar>::computeTransformation;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::final_transformation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::converged_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::computeTransformation;
 ```
 
-(This may already be present — search for it.)
+The `computeTransformation` `using` keeps the inherited overload visible alongside our `Eigen::Matrix4d&` legacy overload, so callers can resolve either signature.
 
-- [ ] **Step 5.2: Replace the empty `computeTransformation(PointCloudSource&, const Matrix4&)` override**
+- [ ] **Step 5.2: Add an include for `PCL_WARN`**
+
+Near the top of `quatro.hpp`, with the other PCL includes, add:
+
+```cpp
+#include <pcl/console/print.h>
+```
+
+- [ ] **Step 5.3: Replace the empty `computeTransformation(PointCloudSource&, const Matrix4&)` override**
 
 Find:
 ```cpp
@@ -398,8 +387,8 @@ Replace with:
 ```cpp
 void computeTransformation(PointCloudSource& output, const Matrix4& guess) override {
     if (!guess.isIdentity()) {
-        PCL_WARN("[%s] Quatro is a global registration method and ignores the "
-                 "`guess` argument passed via align(...). Use "
+        PCL_WARN("[%s] Quatro is a global registration method and ignores "
+                 "the `guess` argument passed via align(...). Use "
                  "setPreEstaimatedRyRx() to inject a rotational prior.\n",
                  this->getClassName().c_str());
     }
@@ -418,19 +407,18 @@ void computeTransformation(PointCloudSource& output, const Matrix4& guess) overr
 }
 ```
 
-- [ ] **Step 5.3: Build**
+- [ ] **Step 5.4: Build**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro 2>&1 | tail -30
+./docker/run.sh build-pkg 2>&1 | tail -30
 ```
 
 Expected: clean build. Common errors and fixes:
 - "`final_transformation_` was not declared" → Step 5.1 missed; add the `using` line.
 - "`converged_` was not declared" → same fix.
-- "`PCL_WARN` was not declared" → add `#include <pcl/console/print.h>` near the top of `quatro.hpp`.
+- "`PCL_WARN` was not declared" → Step 5.2 missed; add the include.
 
-- [ ] **Step 5.4: Smoke-test the new `align()` API**
+- [ ] **Step 5.5: Smoke-test the new `align()` API in a temporary block**
 
 Append this temporary block at the end of `examples/run_global_registration.cpp::main` — just before the `while (ros::ok())` loop:
 
@@ -444,13 +432,25 @@ Append this temporary block at the end of `examples/run_global_registration.cpp:
     quatro2.align(aligned_via_align);
     Eigen::Matrix4d via_align =
         quatro2.getFinalTransformation().template cast<double>();
-    std::cout << "[ALIGN-API] output=\n" << via_align << std::endl;
+    std::cout << "[ALIGN-API]";
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            std::cout << " " << via_align(r, c);
+        }
+    }
+    std::cout << std::endl;
 }
 ```
 
-Rebuild, rerun. The `[ALIGN-API]` matrix MUST match `materials/baseline_transform.txt`.
+Run:
 
-- [ ] **Step 5.5: Revert the temporary smoke test**
+```bash
+./docker/run.sh test 2>&1 | grep -E '^\[QUATRO_OUTPUT\]|^\[ALIGN-API\]'
+```
+
+Both lines must show identical numerical values (modulo the prefix).
+
+- [ ] **Step 5.6: Revert the temporary smoke-test block**
 
 ```bash
 git checkout -- examples/run_global_registration.cpp
@@ -458,7 +458,16 @@ git checkout -- examples/run_global_registration.cpp
 
 (The permanent example update happens in Task 7.)
 
-- [ ] **Step 5.6: Commit**
+- [ ] **Step 5.7: Regression check (legacy API still produces baseline)**
+
+```bash
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+```
+
+Expected: `REGRESSION OK`.
+
+- [ ] **Step 5.8: Commit**
 
 ```bash
 git add include/quatro.hpp
@@ -467,9 +476,9 @@ git commit -m "Implement pcl::Registration virtual computeTransformation overrid
 
 ---
 
-## Task 6: Wire legacy method to also set `final_transformation_`
+## Task 6: Wire the legacy method to also set `final_transformation_`
 
-**Why:** Spec section 4.2.3 — both API surfaces should leave the object in the same observable state, so `getFinalTransformation()` works regardless of which entry point the user calls. This is a costless improvement and a strict superset of the prior behavior.
+**Why:** Spec section 4.2.3 — both API surfaces should leave the object in the same observable state, so `getFinalTransformation()` works regardless of which entry point the user calls. Costless improvement and a strict superset of the prior behavior.
 
 **Files:**
 - Modify: `include/quatro.hpp` (the legacy wrapper introduced in Task 4.3)
@@ -501,20 +510,19 @@ void computeTransformation(Eigen::Matrix4d& output) {
 - [ ] **Step 6.2: Build**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro 2>&1 | tail -20
+./docker/run.sh build-pkg 2>&1 | tail -20
 ```
 
 Expected: clean build.
 
-- [ ] **Step 6.3: Run example, confirm output unchanged**
+- [ ] **Step 6.3: Regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-The example still uses the legacy `computeTransformation(Eigen::Matrix4d&)` API at this point. The `output` matrix it prints (use the temporary print from Task 1.3 if needed) MUST match the baseline.
+Expected: `REGRESSION OK`.
 
 - [ ] **Step 6.4: Commit**
 
@@ -525,7 +533,7 @@ git commit -m "Legacy computeTransformation(Eigen::Matrix4d&) also sets final_tr
 
 ---
 
-## Task 7: Update example to use the `align()` API
+## Task 7: Switch the example to the `align()` API
 
 **Why:** Spec section 4.4 — show the PCL-idiomatic flow as the recommended usage. Keep the legacy call path documented in a comment so readers see both options.
 
@@ -536,7 +544,7 @@ git commit -m "Legacy computeTransformation(Eigen::Matrix4d&) also sets final_tr
 
 - [ ] **Step 7.1: Replace the legacy call with `align()`**
 
-In `examples/run_global_registration.cpp`, find lines 242-246:
+In `examples/run_global_registration.cpp`, find the block (currently lines 242-246):
 
 ```cpp
 std::chrono::system_clock::time_point before_optim = std::chrono::system_clock::now();
@@ -570,20 +578,19 @@ Eigen::Matrix4d output =
 - [ ] **Step 7.2: Build**
 
 ```bash
-cd ~/catkin_ws
-catkin build quatro 2>&1 | tail -20
+./docker/run.sh build-pkg 2>&1 | tail -20
 ```
 
 Expected: clean build.
 
-- [ ] **Step 7.3: Run the example, confirm bit-identical output**
+- [ ] **Step 7.3: Regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-Add the temporary print from Task 1.3 if needed. The matrix MUST match `materials/baseline_transform.txt`.
+Expected: `REGRESSION OK`. The example now exercises the `align()` path; the printed matrix MUST equal the baseline (which was captured via the legacy path).
 
 - [ ] **Step 7.4: Commit**
 
@@ -642,48 +649,37 @@ target_link_libraries(run_example
 - [ ] **Step 8.3: Clean rebuild**
 
 ```bash
-cd ~/catkin_ws
-catkin clean quatro -y
-catkin build quatro 2>&1 | tail -30
+./docker/run.sh clean
+./docker/run.sh build-pkg 2>&1 | tail -30
 ```
 
-Expected: clean build.
+Expected: clean build from scratch.
 
-- [ ] **Step 8.4: Run example one final time, confirm baseline match**
+- [ ] **Step 8.4: Regression check**
 
 ```bash
-source ~/catkin_ws/devel/setup.bash
-OMP_NUM_THREADS=4 roslaunch quatro quatro.launch
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-The output matrix MUST still match `materials/baseline_transform.txt`.
+Expected: `REGRESSION OK`.
 
-- [ ] **Step 8.5: Remove the baseline reference file**
-
-It served its purpose. Keeping a recorded numerical output in the repo invites confusion when the algorithm parameters legitimately change.
-
-```bash
-git rm materials/baseline_transform.txt
-```
-
-- [ ] **Step 8.6: Commit**
+- [ ] **Step 8.5: Commit**
 
 ```bash
 git add CMakeLists.txt
-git commit -m "Bump PCL minimum to 1.10; fix \${PCL_LIBRARY_DIRS} -> \${PCL_LIBRARIES} typo; remove baseline file"
+git commit -m "Bump PCL minimum to 1.10; fix \${PCL_LIBRARY_DIRS} -> \${PCL_LIBRARIES} typo"
 ```
 
 ---
 
 ## Task 9: Final verification
 
-**Why:** Sanity-check the whole refactor end-to-end before declaring done.
+**Why:** End-to-end confidence sweep before declaring done.
 
 **Steps:**
 
-- [ ] **Step 9.1: Read through `include/quatro.hpp` top-to-bottom**
-
-Confirm with `grep`:
+- [ ] **Step 9.1: Static checks on `include/quatro.hpp`**
 
 ```bash
 grep -n "using namespace" include/quatro.hpp        # expect: no output
@@ -692,14 +688,13 @@ grep -n "geometry_msgs" include/quatro.hpp          # expect: no output
 grep -n "<unistd.h>" include/quatro.hpp             # expect: no output
 ```
 
-If any of these print lines, fix them and amend.
+If any of these prints lines, fix and amend.
 
-- [ ] **Step 9.2: Confirm both API surfaces work in a single run**
+- [ ] **Step 9.2: Both API surfaces work in a single run**
 
-Temporarily extend `examples/run_global_registration.cpp` to call BOTH APIs in sequence:
+Temporarily extend `examples/run_global_registration.cpp` to also call the legacy API alongside the existing `align()` flow. Add this block just before the `while (ros::ok())` loop:
 
 ```cpp
-// After the existing align() call, also call the legacy API and compare:
 {
     Quatro<PointType, PointType> quatro_legacy;
     quatro_legacy.reset(params);
@@ -707,40 +702,54 @@ Temporarily extend `examples/run_global_registration.cpp` to call BOTH APIs in s
     quatro_legacy.setInputTarget(tgtMatched);
     Eigen::Matrix4d legacy_output;
     quatro_legacy.computeTransformation(legacy_output);
-    std::cout << "[LEGACY-API] output=\n" << legacy_output << std::endl;
-    std::cout << "[LEGACY-API] getFinalTransformation()=\n"
-              << quatro_legacy.getFinalTransformation().template cast<double>()
-              << std::endl;
+    std::cout << "[LEGACY-API]";
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            std::cout << " " << legacy_output(r, c);
+        }
+    }
+    std::cout << std::endl;
+    Eigen::Matrix4d legacy_via_getter =
+        quatro_legacy.getFinalTransformation().template cast<double>();
+    std::cout << "[LEGACY-GETTER]";
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            std::cout << " " << legacy_via_getter(r, c);
+        }
+    }
+    std::cout << std::endl;
 }
 ```
 
-Build, run. Verify:
-- `[LEGACY-API] output` matches the baseline.
-- `[LEGACY-API] getFinalTransformation()` matches `[LEGACY-API] output` exactly (Task 6 wired this).
-- The earlier `align()`-style output (printed by the regular example flow) also matches.
+Run:
+
+```bash
+./docker/run.sh test 2>&1 | grep -E '^\[QUATRO_OUTPUT\]|^\[LEGACY-API\]|^\[LEGACY-GETTER\]'
+```
+
+Verify all three lines have the same numerical values (modulo prefix). The `[QUATRO_OUTPUT]` line uses the `align()` path (Task 7); `[LEGACY-API]` uses `computeTransformation(Eigen::Matrix4d&)`; `[LEGACY-GETTER]` confirms `getFinalTransformation()` is now wired by Task 6.
 
 Then revert: `git checkout -- examples/run_global_registration.cpp`.
 
-- [ ] **Step 9.3: Final clean build**
+- [ ] **Step 9.3: Final clean build + regression**
 
 ```bash
-cd ~/catkin_ws
-catkin clean quatro -y
-catkin build quatro 2>&1 | tail -10
+./docker/run.sh clean
+./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
+diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
 ```
 
-Expected: clean build.
+Expected: `REGRESSION OK`. This is the authoritative end-to-end check.
 
-- [ ] **Step 9.4: Sanity-check commit log**
+- [ ] **Step 9.4: Inspect the commit log**
 
 ```bash
-cd ~/catkin_ws/src/Quatro
-git log --oneline main..HEAD
+git log --oneline main..HEAD 2>/dev/null || git log --oneline -8
 ```
 
-Expected: 8 commits, in the order produced by Tasks 1–8. No "WIP" or "fixup" commits.
+Expected: 7 refactor commits (Tasks 2–8), each with a clear message. No "WIP" or "fixup".
 
-If the implementation is in a worktree branch (per `superpowers:using-git-worktrees`), the branch is now ready to merge. If on `main` directly, no further git work needed.
+If the implementation is on a worktree branch, the branch is now ready to merge. If on `main` directly, no further git work needed before pushing.
 
 ---
 

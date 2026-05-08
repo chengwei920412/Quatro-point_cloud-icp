@@ -13,6 +13,7 @@ materials/*.pcd
 
 .idea/
 .vscode/
+.claude/
 
 # Prerequisites
 *.d

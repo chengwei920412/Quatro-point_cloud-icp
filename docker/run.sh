@@ -20,13 +20,20 @@ DEVEL_VOL="${QUATRO_DEVEL_VOL:-quatro_devel}"
 LOGS_VOL="${QUATRO_LOGS_VOL:-quatro_logs}"
 TEST_TIMEOUT="${QUATRO_TEST_TIMEOUT:-60}"
 
+# Splits leading flag-style args (-it, -e KEY=VAL, ...) from a trailing
+# command. Flags go before the image tag; the command goes after.
 run_docker() {
-    docker run --rm "$@" \
+    local flags=()
+    while [[ $# -gt 0 && "$1" == -* ]]; do
+        flags+=("$1")
+        shift
+    done
+    docker run --rm ${flags[@]+"${flags[@]}"} \
         -v "$REPO_ROOT:/ws/src/quatro:rw" \
         -v "$BUILD_VOL:/ws/build" \
         -v "$DEVEL_VOL:/ws/devel" \
         -v "$LOGS_VOL:/ws/logs" \
-        "$IMAGE_TAG"
+        "$IMAGE_TAG" "$@"
 }
 
 cmd="${1:-help}"
