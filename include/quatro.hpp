@@ -9,6 +9,7 @@
 
 #include <iostream>
 
+#include <pcl/console/print.h>
 #include <pcl/registration/correspondence_estimation.h>
 #include <pcl/registration/default_convergence_criteria.h>
 #include <pcl/registration/registration.h>
@@ -738,7 +739,26 @@ public:
         inlier_graph_.clear();
     }
 
-    void computeTransformation(PointCloudSource &output, const Matrix4 &guess) override {};
+    void computeTransformation(PointCloudSource& output, const Matrix4& guess) override {
+        if (!guess.isIdentity()) {
+            PCL_WARN("[%s] Quatro is a global registration method and ignores "
+                     "the `guess` argument passed via align(...). Use "
+                     "setPreEstaimatedRyRx() to inject a rotational prior.\n",
+                     this->getClassName().c_str());
+        }
+
+        Eigen::Matrix4d transform_d = Eigen::Matrix4d::Identity();
+        computeQuatroTransformation_(transform_d);
+
+        final_transformation_ = transform_d.template cast<Scalar>();
+        converged_ = solution_.valid;
+
+        if (solution_.valid) {
+            pcl::transformPointCloud(*input_, output, final_transformation_);
+        } else {
+            output = *input_;
+        }
+    }
 
     void computeTransformation(Eigen::Matrix4d& output) {
         computeQuatroTransformation_(output);
