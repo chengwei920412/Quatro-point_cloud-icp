@@ -762,6 +762,10 @@ public:
 
     void computeTransformation(Eigen::Matrix4d& output) {
         computeQuatroTransformation_(output);
+        // Mirror the state that align()-style callers expect, so
+        // getFinalTransformation() / hasConverged() work after this entry point too.
+        final_transformation_ = output.template cast<Scalar>();
+        converged_ = solution_.valid;
     }
 
     void setInliers(
