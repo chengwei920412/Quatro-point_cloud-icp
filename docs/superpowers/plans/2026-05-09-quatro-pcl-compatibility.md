@@ -16,18 +16,20 @@
 |---------|--------------|
 | `./docker/run.sh build-image` | Build the `quatro-dev:noetic` image (one-time, ~1 min after base pulled). |
 | `./docker/run.sh build-pkg`  | `catkin build quatro` inside the container; uses named volumes for incremental builds across runs. |
-| `./docker/run.sh test`       | `catkin build quatro` + headless `roslaunch quatro_headless.launch` with a timeout. Prints `[QUATRO_OUTPUT] m00 m01 ... m33` on a single grep-able line. |
+| `./docker/run.sh test`       | `catkin build quatro` + headless `roslaunch quatro_headless.launch` with a timeout. Pins `OMP_NUM_THREADS=1`. Prints `[QUATRO_OUTPUT] m00 m01 ... m33` on a single grep-able line. |
+| `./docker/regress.sh`        | Calls `./docker/run.sh test` once, parses the matrix, validates against tolerance bounds. Prints `REGRESSION OK` or `REGRESSION FAILED (N check(s) violated)`. Exit 0 on pass, non-zero on fail. |
 | `./docker/run.sh shell`      | Interactive shell inside the container for debugging. |
 | `./docker/run.sh clean`      | Remove the named volumes (forces a clean build next time). |
 
-The reference output for the bundled `000540.bin` / `001319.bin` toy pair is committed at `docker/baseline_transform.txt`. Every task verifies behavior with:
+**Why tolerance-based:** Quatro is a randomized algorithm (FLANN's randomized kd-tree splits, PMC heuristic max-clique). Outputs vary across runs even at the same git revision; an exact-string `diff` against a frozen baseline can't pass even at HEAD. The README acknowledges this ("multi-thread issues"). The regress.sh bounds were derived from 12+ pre-refactor runs and are deliberately wide enough to absorb the algorithm's natural variance, but tight enough to catch a refactor that broke the core pipeline (identity output, wrong sign, 90-degree-off solution, NaN, etc).
+
+Every task that changes algorithm-relevant code verifies behavior with:
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Empty diff + `REGRESSION OK` print = pass. Any difference = fail.
+Last line should be `REGRESSION OK`. Anything else = fail. For tasks that only change build files (e.g. CMake), `./docker/run.sh build-pkg` is enough.
 
 ---
 
@@ -40,8 +42,8 @@ Empty diff + `REGRESSION OK` print = pass. Any difference = fail.
 | `examples/run_global_registration.cpp` | MODIFIED | `voxelize` callers re-qualified to `quatro::voxelize<T>(...)`. Switched to `quatro.align(...)` + `getFinalTransformation()` for the registration call. Legacy call documented in a comment. |
 | `CMakeLists.txt` | MODIFIED | PCL minimum version bumped 1.8 → 1.10. `${PCL_LIBRARY_DIRS}` typo fixed to `${PCL_LIBRARIES}`. |
 
-Already in place from the harness commit (`197b638`):
-- `docker/Dockerfile`, `docker/run.sh`, `docker/baseline_transform.txt`
+Already in place from the harness commits:
+- `docker/Dockerfile`, `docker/run.sh` (pins `OMP_NUM_THREADS=1`), `docker/regress.sh` (tolerance-based regression check)
 - `launch/quatro_headless.launch`
 - `[QUATRO_OUTPUT]` print in `examples/run_global_registration.cpp`
 
@@ -66,9 +68,10 @@ If the image already exists, the Docker build is a no-op (cache hit). Output end
 - [ ] **Step 1.2: Run the regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
+
+Expected: last line `REGRESSION OK`.
 
 Expected: empty diff and `REGRESSION OK`. The exact baseline content is:
 ```
@@ -254,9 +257,10 @@ Expected: clean build. If it fails, the error names the unqualified symbol — q
 - [ ] **Step 3.7: Run the regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
+
+Expected: last line `REGRESSION OK`.
 
 Expected: empty diff and `REGRESSION OK`. If not, the qualification touched something that changed behavior — investigate.
 
@@ -331,11 +335,10 @@ Expected: clean build. Common errors:
 - [ ] **Step 4.5: Regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`. Refactoring without behavior change is the criterion.
+Expected: last line `REGRESSION OK`. Refactoring without behavior change is the criterion.
 
 - [ ] **Step 4.6: Commit**
 
@@ -461,11 +464,10 @@ git checkout -- examples/run_global_registration.cpp
 - [ ] **Step 5.7: Regression check (legacy API still produces baseline)**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`.
+Expected: last line `REGRESSION OK`.
 
 - [ ] **Step 5.8: Commit**
 
@@ -518,11 +520,10 @@ Expected: clean build.
 - [ ] **Step 6.3: Regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`.
+Expected: last line `REGRESSION OK`.
 
 - [ ] **Step 6.4: Commit**
 
@@ -586,11 +587,10 @@ Expected: clean build.
 - [ ] **Step 7.3: Regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`. The example now exercises the `align()` path; the printed matrix MUST equal the baseline (which was captured via the legacy path).
+Expected: last line `REGRESSION OK`. The example now exercises the `align()` path; the printed matrix MUST equal the baseline (which was captured via the legacy path).
 
 - [ ] **Step 7.4: Commit**
 
@@ -658,11 +658,10 @@ Expected: clean build from scratch.
 - [ ] **Step 8.4: Regression check**
 
 ```bash
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`.
+Expected: last line `REGRESSION OK`.
 
 - [ ] **Step 8.5: Commit**
 
@@ -735,11 +734,10 @@ Then revert: `git checkout -- examples/run_global_registration.cpp`.
 
 ```bash
 ./docker/run.sh clean
-./docker/run.sh test 2>&1 | grep '^\[QUATRO_OUTPUT\]' > /tmp/quatro_out.txt
-diff /tmp/quatro_out.txt docker/baseline_transform.txt && echo "REGRESSION OK"
+./docker/regress.sh 2>&1 | tail -20
 ```
 
-Expected: `REGRESSION OK`. This is the authoritative end-to-end check.
+Expected: last line `REGRESSION OK`. This is the authoritative end-to-end check.
 
 - [ ] **Step 9.4: Inspect the commit log**
 

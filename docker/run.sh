@@ -54,8 +54,14 @@ case "$cmd" in
         "
         ;;
     test)
+        # Pin OMP_NUM_THREADS=1 so the algorithm's output is bit-deterministic
+        # across runs (parallel float reductions reorder under multi-threading
+        # and produce small per-run drift; the README's "multi-thread issues"
+        # note acknowledges this). For perf benchmarking, override via
+        # `QUATRO_OMP_NUM_THREADS=4 ./docker/run.sh test`.
         run_docker bash -lc "
             set -e
+            export OMP_NUM_THREADS=${QUATRO_OMP_NUM_THREADS:-1}
             source /opt/ros/noetic/setup.bash
             cd /ws
             catkin build quatro
