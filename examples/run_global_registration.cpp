@@ -242,8 +242,19 @@ int main(int argc, char **argv) {
     std::chrono::system_clock::time_point before_optim = std::chrono::system_clock::now();
     quatro.setInputSource(srcMatched);
     quatro.setInputTarget(tgtMatched);
-    Eigen::Matrix4d output;
-    quatro.computeTransformation(output);
+
+    // PCL-idiomatic flow (recommended). The aligned cloud parameter is
+    // required by pcl::Registration::align(), but for this example we only
+    // need the resulting transform; we use it later via pcl::transformPointCloud
+    // against the *raw* source (srcRaw) below.
+    pcl::PointCloud<PointType> aligned_matched;
+    quatro.align(aligned_matched);
+    Eigen::Matrix4d output =
+            quatro.getFinalTransformation().template cast<double>();
+
+    // Legacy API (kept working for back-compat):
+    //   Eigen::Matrix4d output;
+    //   quatro.computeTransformation(output);
 
     std::chrono::duration<double> sec = std::chrono::system_clock::now() - start;
     std::chrono::duration<double> optim_sec = std::chrono::system_clock::now() - before_optim;
