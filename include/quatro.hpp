@@ -740,173 +740,8 @@ public:
 
     void computeTransformation(PointCloudSource &output, const Matrix4 &guess) override {};
 
-    void computeTransformation(Eigen::Matrix4d &output) {
-
-        pcl::PointCloud<pcl::PointXYZ>::Ptr src(new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::PointCloud<pcl::PointXYZ>::Ptr tgt(new pcl::PointCloud<pcl::PointXYZ>);
-
-        pcl2eigen(*input_, src_matched);
-        pcl2eigen(*target_, tgt_matched);
-
-        src_tims_ = computeTIMs(src_matched, &src_tims_map_);
-        dst_tims_ = computeTIMs(tgt_matched, &dst_tims_map_);
-        solveForScale(src_tims_, dst_tims_);
-
-        // Calculate Maximum Clique
-        if (params_.inlier_selection_mode != INLIER_SELECTION_MODE::NONE) { //0,1,2 -> default 1
-
-            inlier_graph_.populateVertices(src_matched.cols());
-            for (size_t i = 0; i < scale_inliers_mask_.cols(); ++i) {
-                if (scale_inliers_mask_(0, i)) {
-                    inlier_graph_.addEdge(src_tims_map_(0, i), src_tims_map_(1, i));
-                }
-            }
-
-            teaser::MaxCliqueSolver::Params clique_params;
-            if (params_.inlier_selection_mode == INLIER_SELECTION_MODE::PMC_EXACT) {
-                clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::PMC_EXACT;
-            } else if (params_.inlier_selection_mode == INLIER_SELECTION_MODE::PMC_HEU) {
-                clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::PMC_HEU;
-            } else {
-                clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::KCORE_HEU;
-            }
-
-            clique_params.time_limit                = params_.max_clique_time_limit;
-            clique_params.kcore_heuristic_threshold = params_.kcore_heuristic_threshold;
-
-            teaser::MaxCliqueSolver clique_solver(clique_params);
-            max_clique_ = clique_solver.findMaxClique(inlier_graph_);
-
-            std::sort(max_clique_.begin(), max_clique_.end());
-            std::copy(max_clique_.begin(), max_clique_.end(), std::ostream_iterator<int>(std::cout, " "));
-            std::cout << std::endl;
-            if (max_clique_.size() <= 1) {
-                TEASER_DEBUG_INFO_MSG("Clique size too small. Abort.");
-                solution_.valid = false;
-                return;        //return solution_
-            }
-        }
-
-        // Calculate new measurements & TIMs based on max clique inliers
-        if (params_.rotation_tim_graph == INLIER_GRAPH_FORMULATION::CHAIN) {
-            // ==============>
-            // chain graph
-            //    TEASER_DEBUG_INFO_MSG("Using chain graph for GNC rotation.");
-            std::cout << "\033[1;32mNum. of maximum cliques: " << max_clique_.size() << "\033[0m"
-                      << std::endl;
-            num_maxclique_ = max_clique_.size();
-            pruned_src_tims_.resize(3, max_clique_.size());
-            pruned_dst_tims_.resize(3, max_clique_.size());
-            src_tims_map_rotation_.resize(2, max_clique_.size());
-            dst_tims_map_rotation_.resize(2, max_clique_.size());
-            for (size_t i = 0; i < max_clique_.size(); ++i) {
-                const auto &root = max_clique_[i];
-                int        leaf;
-                if (i != max_clique_.size() - 1) {
-                    leaf = max_clique_[i + 1];
-                } else {
-                    leaf = max_clique_[0];
-                }
-                pruned_src_tims_.col(i)      = src_matched.col(leaf) - src_matched.col(root);
-                pruned_dst_tims_.col(i)      = tgt_matched.col(leaf) - tgt_matched.col(root);
-                // populate the TIMs map
-                dst_tims_map_rotation_(0, i) = leaf;
-                dst_tims_map_rotation_(1, i) = root;
-                src_tims_map_rotation_(0, i) = leaf;
-                src_tims_map_rotation_(1, i) = root;
-            }
-        }
-        // Remove scaling for rotation estimation
-        pruned_dst_tims_ *= (1 / solution_.scale);
-        // Update GNC rotation solver's noise bound with the new information
-        // Note: this implicitly assumes that rotation_solver_'s noise bound
-        // is set to the original noise bound of the measurements.
-        auto params = getParams();            //rotation_solver_-> 뺌
-        params.noise_bound *= (2 / solution_.scale);
-        setParams(params);                     //rotation_solver_-> 뺌
-
-        // Solve for rotation
-        solveForRotation(pruned_src_tims_, pruned_dst_tims_);
-
-        rotation_inliers_.clear();
-
-        // Save indices of inlier TIMs from GNC rotation estimation
-        for (size_t i = 0; i < rotation_inliers_mask_.cols(); ++i) {
-            if (i == 0) {
-                // Check (N-1)-th and 0-th
-                if (rotation_inliers_mask_(0, rotation_inliers_mask_.cols() - 1) &&
-                    rotation_inliers_mask_(0, i)) {
-                    rotation_inliers_.emplace_back(i);
-                }
-            } else {
-                // Check i-1th and i-th
-                if (rotation_inliers_mask_(0, i - 1) && rotation_inliers_mask_(0, i)) {
-                    rotation_inliers_.emplace_back(i);
-                }
-            }
-        }
-        num_rot_inliers_ = rotation_inliers_.size();
-        int                                      N_R = rotation_inliers_.size();
-        Eigen::Matrix<double, 3, Eigen::Dynamic> rotation_pruned_src;
-        Eigen::Matrix<double, 3, Eigen::Dynamic> rotation_pruned_dst;
-
-        if (params_.using_rot_inliers_when_estimating_cote && (N_R > 0)) {
-            for (size_t i = 0; i < N_R; ++i) {
-                rotation_pruned_src.resize(3, N_R);
-                rotation_pruned_dst.resize(3, N_R);
-                rotation_pruned_src.col(i) = src_matched.col(max_clique_[rotation_inliers_[i]]);
-                rotation_pruned_dst.col(i) = tgt_matched.col(max_clique_[rotation_inliers_[i]]);
-            }
-        } else {
-            int         N_MC = max_clique_.size();
-            for (size_t i    = 0; i < N_MC; ++i) {
-                rotation_pruned_src.resize(3, N_MC);
-                rotation_pruned_dst.resize(3, N_MC);
-                if (reg_name_ == "Quatro") {
-                    rotation_pruned_src.col(i) = estimated_RyRx_ * src_matched.col(max_clique_[i]);
-                }
-                // else if (reg_name_ == "TEASER") {
-                //     rotation_pruned_src.col(i) = src.col(max_clique_[i]);
-                // }
-                rotation_pruned_dst.col(i) = tgt_matched.col(max_clique_[i]);
-            }
-        }
-        /**
-        * Modes of COTE:
-        * "weighted_mean" (TEASER++) and "median" (Ours)
-        * Median selection might be better because the weights of pairs are actually constant with same values.
-        */
-        if (params_.cote_mode == "median") {
-            solveForTranslation(solution_.scale * solution_.rotation * rotation_pruned_src,
-                                rotation_pruned_dst, true);
-        } else if (params_.cote_mode == "weighted_mean") {
-            solveForTranslation(solution_.scale * solution_.rotation * rotation_pruned_src,
-                                rotation_pruned_dst);
-        } else { throw std::invalid_argument("[COTE]: Wrong parameter comes!"); }
-
-        // Find the final inliers
-        translation_inliers_ = teaser::utils::findNonzero<bool>(translation_inliers_mask_);
-
-        // final_inliers: Indices order of matched pairs
-        // which corresponds to `input_` and `target_`
-        // I.e. indices of src and dst
-        final_inliers_.clear();
-        final_inliers_.reserve(translation_inliers_.size());
-        // Note that `params_.using_rot_inliers_when_estimating_cote` == false exhibits better results
-        if (params_.using_rot_inliers_when_estimating_cote && (N_R > 0)) {
-            for (const auto &idx : translation_inliers_) {
-                final_inliers_.push_back(max_clique_[rotation_inliers_[idx]]);
-            }
-        } else {
-            for (const auto &idx : translation_inliers_) {
-                final_inliers_.push_back(max_clique_[idx]);
-            }
-        }
-        solution_.valid = true;
-
-        output = Eigen::Matrix4d::Identity();
-        output.block<3, 3>(0, 0)    = solution_.rotation;
-        output.topRightCorner(3, 1) = solution_.translation;
+    void computeTransformation(Eigen::Matrix4d& output) {
+        computeQuatroTransformation_(output);
     }
 
     void setInliers(
@@ -1032,6 +867,184 @@ protected:
 
 private:
 
+    /** \brief Algorithm core. Computes the registration transform in
+     *  double precision and writes it into `output`. Sets `solution_.valid`.
+     *  Does NOT touch `final_transformation_` or `converged_` — the public
+     *  entry points are responsible for that.
+     */
+    void computeQuatroTransformation_(Eigen::Matrix4d& output);
+
 };
+
+template <typename PointSource, typename PointTarget, typename Scalar>
+void Quatro<PointSource, PointTarget, Scalar>::computeQuatroTransformation_(
+        Eigen::Matrix4d& output) {
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr src(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr tgt(new pcl::PointCloud<pcl::PointXYZ>);
+
+    pcl2eigen(*input_, src_matched);
+    pcl2eigen(*target_, tgt_matched);
+
+    src_tims_ = computeTIMs(src_matched, &src_tims_map_);
+    dst_tims_ = computeTIMs(tgt_matched, &dst_tims_map_);
+    solveForScale(src_tims_, dst_tims_);
+
+    // Calculate Maximum Clique
+    if (params_.inlier_selection_mode != INLIER_SELECTION_MODE::NONE) { //0,1,2 -> default 1
+
+        inlier_graph_.populateVertices(src_matched.cols());
+        for (size_t i = 0; i < scale_inliers_mask_.cols(); ++i) {
+            if (scale_inliers_mask_(0, i)) {
+                inlier_graph_.addEdge(src_tims_map_(0, i), src_tims_map_(1, i));
+            }
+        }
+
+        teaser::MaxCliqueSolver::Params clique_params;
+        if (params_.inlier_selection_mode == INLIER_SELECTION_MODE::PMC_EXACT) {
+            clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::PMC_EXACT;
+        } else if (params_.inlier_selection_mode == INLIER_SELECTION_MODE::PMC_HEU) {
+            clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::PMC_HEU;
+        } else {
+            clique_params.solver_mode = teaser::MaxCliqueSolver::CLIQUE_SOLVER_MODE::KCORE_HEU;
+        }
+
+        clique_params.time_limit                = params_.max_clique_time_limit;
+        clique_params.kcore_heuristic_threshold = params_.kcore_heuristic_threshold;
+
+        teaser::MaxCliqueSolver clique_solver(clique_params);
+        max_clique_ = clique_solver.findMaxClique(inlier_graph_);
+
+        std::sort(max_clique_.begin(), max_clique_.end());
+        std::copy(max_clique_.begin(), max_clique_.end(), std::ostream_iterator<int>(std::cout, " "));
+        std::cout << std::endl;
+        if (max_clique_.size() <= 1) {
+            TEASER_DEBUG_INFO_MSG("Clique size too small. Abort.");
+            solution_.valid = false;
+            return;        //return solution_
+        }
+    }
+
+    // Calculate new measurements & TIMs based on max clique inliers
+    if (params_.rotation_tim_graph == INLIER_GRAPH_FORMULATION::CHAIN) {
+        // ==============>
+        // chain graph
+        //    TEASER_DEBUG_INFO_MSG("Using chain graph for GNC rotation.");
+        std::cout << "\033[1;32mNum. of maximum cliques: " << max_clique_.size() << "\033[0m"
+                  << std::endl;
+        num_maxclique_ = max_clique_.size();
+        pruned_src_tims_.resize(3, max_clique_.size());
+        pruned_dst_tims_.resize(3, max_clique_.size());
+        src_tims_map_rotation_.resize(2, max_clique_.size());
+        dst_tims_map_rotation_.resize(2, max_clique_.size());
+        for (size_t i = 0; i < max_clique_.size(); ++i) {
+            const auto &root = max_clique_[i];
+            int        leaf;
+            if (i != max_clique_.size() - 1) {
+                leaf = max_clique_[i + 1];
+            } else {
+                leaf = max_clique_[0];
+            }
+            pruned_src_tims_.col(i)      = src_matched.col(leaf) - src_matched.col(root);
+            pruned_dst_tims_.col(i)      = tgt_matched.col(leaf) - tgt_matched.col(root);
+            // populate the TIMs map
+            dst_tims_map_rotation_(0, i) = leaf;
+            dst_tims_map_rotation_(1, i) = root;
+            src_tims_map_rotation_(0, i) = leaf;
+            src_tims_map_rotation_(1, i) = root;
+        }
+    }
+    // Remove scaling for rotation estimation
+    pruned_dst_tims_ *= (1 / solution_.scale);
+    // Update GNC rotation solver's noise bound with the new information
+    // Note: this implicitly assumes that rotation_solver_'s noise bound
+    // is set to the original noise bound of the measurements.
+    auto params = getParams();            //rotation_solver_-> 뺌
+    params.noise_bound *= (2 / solution_.scale);
+    setParams(params);                     //rotation_solver_-> 뺌
+
+    // Solve for rotation
+    solveForRotation(pruned_src_tims_, pruned_dst_tims_);
+
+    rotation_inliers_.clear();
+
+    // Save indices of inlier TIMs from GNC rotation estimation
+    for (size_t i = 0; i < rotation_inliers_mask_.cols(); ++i) {
+        if (i == 0) {
+            // Check (N-1)-th and 0-th
+            if (rotation_inliers_mask_(0, rotation_inliers_mask_.cols() - 1) &&
+                rotation_inliers_mask_(0, i)) {
+                rotation_inliers_.emplace_back(i);
+            }
+        } else {
+            // Check i-1th and i-th
+            if (rotation_inliers_mask_(0, i - 1) && rotation_inliers_mask_(0, i)) {
+                rotation_inliers_.emplace_back(i);
+            }
+        }
+    }
+    num_rot_inliers_ = rotation_inliers_.size();
+    int                                      N_R = rotation_inliers_.size();
+    Eigen::Matrix<double, 3, Eigen::Dynamic> rotation_pruned_src;
+    Eigen::Matrix<double, 3, Eigen::Dynamic> rotation_pruned_dst;
+
+    if (params_.using_rot_inliers_when_estimating_cote && (N_R > 0)) {
+        for (size_t i = 0; i < N_R; ++i) {
+            rotation_pruned_src.resize(3, N_R);
+            rotation_pruned_dst.resize(3, N_R);
+            rotation_pruned_src.col(i) = src_matched.col(max_clique_[rotation_inliers_[i]]);
+            rotation_pruned_dst.col(i) = tgt_matched.col(max_clique_[rotation_inliers_[i]]);
+        }
+    } else {
+        int         N_MC = max_clique_.size();
+        for (size_t i    = 0; i < N_MC; ++i) {
+            rotation_pruned_src.resize(3, N_MC);
+            rotation_pruned_dst.resize(3, N_MC);
+            if (reg_name_ == "Quatro") {
+                rotation_pruned_src.col(i) = estimated_RyRx_ * src_matched.col(max_clique_[i]);
+            }
+            // else if (reg_name_ == "TEASER") {
+            //     rotation_pruned_src.col(i) = src.col(max_clique_[i]);
+            // }
+            rotation_pruned_dst.col(i) = tgt_matched.col(max_clique_[i]);
+        }
+    }
+    /**
+    * Modes of COTE:
+    * "weighted_mean" (TEASER++) and "median" (Ours)
+    * Median selection might be better because the weights of pairs are actually constant with same values.
+    */
+    if (params_.cote_mode == "median") {
+        solveForTranslation(solution_.scale * solution_.rotation * rotation_pruned_src,
+                            rotation_pruned_dst, true);
+    } else if (params_.cote_mode == "weighted_mean") {
+        solveForTranslation(solution_.scale * solution_.rotation * rotation_pruned_src,
+                            rotation_pruned_dst);
+    } else { throw std::invalid_argument("[COTE]: Wrong parameter comes!"); }
+
+    // Find the final inliers
+    translation_inliers_ = teaser::utils::findNonzero<bool>(translation_inliers_mask_);
+
+    // final_inliers: Indices order of matched pairs
+    // which corresponds to `input_` and `target_`
+    // I.e. indices of src and dst
+    final_inliers_.clear();
+    final_inliers_.reserve(translation_inliers_.size());
+    // Note that `params_.using_rot_inliers_when_estimating_cote` == false exhibits better results
+    if (params_.using_rot_inliers_when_estimating_cote && (N_R > 0)) {
+        for (const auto &idx : translation_inliers_) {
+            final_inliers_.push_back(max_clique_[rotation_inliers_[idx]]);
+        }
+    } else {
+        for (const auto &idx : translation_inliers_) {
+            final_inliers_.push_back(max_clique_[idx]);
+        }
+    }
+    solution_.valid = true;
+
+    output = Eigen::Matrix4d::Identity();
+    output.block<3, 3>(0, 0)    = solution_.rotation;
+    output.topRightCorner(3, 1) = solution_.translation;
+}
 
 #endif //QUATRO_H
