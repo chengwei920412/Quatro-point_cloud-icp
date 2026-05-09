@@ -203,8 +203,8 @@ int main(int argc, char **argv) {
     pcl::PointCloud<PointType>::Ptr srcFeat(new pcl::PointCloud<PointType>);
     pcl::PointCloud<PointType>::Ptr tgtFeat(new pcl::PointCloud<PointType>);
 
-    voxelize(srcValidSegments, srcFeat, voxel_size);
-    voxelize(tgtValidSegments, tgtFeat, voxel_size);
+    quatro::voxelize<PointType>(srcValidSegments, srcFeat, voxel_size);
+    quatro::voxelize<PointType>(tgtValidSegments, tgtFeat, voxel_size);
 
     FPFHManager fpfhmanager(normal_radius, fpfh_radius);
     fpfhmanager.flushAllFeatures();

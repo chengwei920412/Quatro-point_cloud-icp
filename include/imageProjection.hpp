@@ -217,7 +217,7 @@ public:
         std::fill(fullInfoCloud->points.begin(), fullInfoCloud->points.end(), nanPoint);
     }
 
-    void getValidSegments(pcl::PointCloud<PointXYZ>& output) {
+    void getValidSegments(pcl::PointCloud<pcl::PointXYZ>& output) {
         pcl::copyPointCloud(*segmentedCloudPure, output);
     }
 

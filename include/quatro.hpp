@@ -7,8 +7,6 @@
 #define QUATRO_H
 
 
-#include <unistd.h>
-#include <geometry_msgs/Pose.h>
 #include <iostream>
 
 #include <pcl/registration/correspondence_estimation.h>
@@ -40,72 +38,48 @@
 
 #include <pcl/PCLPointCloud2.h>
 #include "conversion.hpp"
+#include "quatro/pcl_compat.hpp"
 
-
-using namespace std;
-using namespace pcl;
-
-
-template<typename T>
-void voxelize(
-        const boost::shared_ptr<pcl::PointCloud<T> > srcPtr, boost::shared_ptr<pcl::PointCloud<T> > dstPtr,
-        double voxelSize) {
-    static pcl::VoxelGrid<T> voxel_filter;
-    voxel_filter.setInputCloud(srcPtr);
-    voxel_filter.setLeafSize(voxelSize, voxelSize, voxelSize);
-    voxel_filter.filter(*dstPtr);
-}
-
-
-template<typename T>
-void voxelize(
-        pcl::PointCloud<T> &src, boost::shared_ptr<pcl::PointCloud<T> > dstPtr,
-        double voxelSize) {
-    static pcl::VoxelGrid<T> voxel_filter;
-    voxel_filter.setInputCloud(src);
-    voxel_filter.setLeafSize(voxelSize, voxelSize, voxelSize);
-    voxel_filter.filter(*dstPtr);
-}
 
 template<typename PointSource, typename PointTarget, typename Scalar = double>
-class Quatro : public Registration<PointSource, PointTarget, Scalar> {
+class Quatro : public pcl::Registration<PointSource, PointTarget, Scalar> {
 
 public:
-    using PointCloudSource = typename Registration<PointSource, PointTarget, Scalar>::PointCloudSource;
+    using PointCloudSource = typename pcl::Registration<PointSource, PointTarget, Scalar>::PointCloudSource;
     using PointCloudSourceConstPtr = typename PointCloudSource::ConstPtr;
 
-    using PointCloudTarget = typename Registration<PointSource, PointTarget, Scalar>::PointCloudTarget;
+    using PointCloudTarget = typename pcl::Registration<PointSource, PointTarget, Scalar>::PointCloudTarget;
     using PointCloudTargetConstPtr = typename PointCloudTarget::ConstPtr;
 
-    using Registration<PointSource, PointTarget, Scalar>::reg_name_;
-    using Registration<PointSource, PointTarget, Scalar>::getClassName;
-    using Registration<PointSource, PointTarget, Scalar>::input_;                    //PCLBase<PointSource>::input_ 
-    using Registration<PointSource, PointTarget, Scalar>::indices_;
-    using Registration<PointSource, PointTarget, Scalar>::target_;
-    using Registration<PointSource, PointTarget, Scalar>::nr_iterations_;
-    using Registration<PointSource, PointTarget, Scalar>::max_iterations_;              ////set
-    using Registration<PointSource, PointTarget, Scalar>::previous_transformation_;
-    using Registration<PointSource, PointTarget, Scalar>::final_transformation_;
-    using Registration<PointSource, PointTarget, Scalar>::transformation_;
-    using Registration<PointSource, PointTarget, Scalar>::transformation_epsilon_;          //set
-    using Registration<PointSource, PointTarget, Scalar>::converged_;
-    using Registration<PointSource, PointTarget, Scalar>::corr_dist_threshold_;
-    using Registration<PointSource, PointTarget, Scalar>::inlier_threshold_;
-    using Registration<PointSource, PointTarget, Scalar>::min_number_correspondences_;
-    using Registration<PointSource, PointTarget, Scalar>::update_visualizer_;
-    using Registration<PointSource, PointTarget, Scalar>::euclidean_fitness_epsilon_;
-    using Registration<PointSource, PointTarget, Scalar>::correspondences_;
-    using Registration<PointSource, PointTarget, Scalar>::transformation_estimation_;
-    using Registration<PointSource, PointTarget, Scalar>::correspondence_estimation_;
-    using Registration<PointSource, PointTarget, Scalar>::correspondence_rejectors_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::reg_name_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::getClassName;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::input_;                    //PCLBase<PointSource>::input_
+    using pcl::Registration<PointSource, PointTarget, Scalar>::indices_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::target_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::nr_iterations_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::max_iterations_;              ////set
+    using pcl::Registration<PointSource, PointTarget, Scalar>::previous_transformation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::final_transformation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::transformation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::transformation_epsilon_;          //set
+    using pcl::Registration<PointSource, PointTarget, Scalar>::converged_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::corr_dist_threshold_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::inlier_threshold_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::min_number_correspondences_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::update_visualizer_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::euclidean_fitness_epsilon_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::correspondences_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::transformation_estimation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::correspondence_estimation_;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::correspondence_rejectors_;
 
-    using Registration<PointSource, PointTarget, Scalar>::setInputSource;
-    using Registration<PointSource, PointTarget, Scalar>::setInputTarget;
-    using Registration<PointSource, PointTarget, Scalar>::computeTransformation;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::setInputSource;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::setInputTarget;
+    using pcl::Registration<PointSource, PointTarget, Scalar>::computeTransformation;
 
     typename pcl::registration::DefaultConvergenceCriteria<Scalar>::Ptr
             convergence_criteria_;
-    using Matrix4 = typename Registration<PointSource, PointTarget, Scalar>::Matrix4;
+    using Matrix4 = typename pcl::Registration<PointSource, PointTarget, Scalar>::Matrix4;
 
     /** \brief Empty constructor. */
     Quatro()
@@ -284,7 +258,7 @@ public:
      * \param[in] cloud the input point cloud source
      */
     void setInputSource(const PointCloudSourceConstPtr &cloud) override {
-        Registration<PointSource, PointTarget, Scalar>::setInputSource(cloud); //setInputSource <- >PCLBase::setInputCloud <- 
+        pcl::Registration<PointSource, PointTarget, Scalar>::setInputSource(cloud); //setInputSource <- >PCLBase::setInputCloud <-
         source_has_normals_ = false;
     }
 
@@ -300,7 +274,7 @@ public:
                       getClassName().c_str());
             return;
         }
-        Registration<PointSource, PointTarget, Scalar>::setInputTarget(cloud);
+        pcl::Registration<PointSource, PointTarget, Scalar>::setInputTarget(cloud);
         target_has_normals_ = false;
     }
 
@@ -723,7 +697,7 @@ public:
                     assert(idx >= 0);
                     candidates.push_back(X(idx));
                 }
-                sort(candidates.begin(), candidates.end());
+                std::sort(candidates.begin(), candidates.end());
                 median = static_cast<double>(candidates[candidates.size() / 2 - 1] +
                                              candidates[candidates.size() / 2]) / 2.0;
             }
@@ -908,7 +882,7 @@ public:
         } else if (params_.cote_mode == "weighted_mean") {
             solveForTranslation(solution_.scale * solution_.rotation * rotation_pruned_src,
                                 rotation_pruned_dst);
-        } else { throw invalid_argument("[COTE]: Wrong parameter comes!"); }
+        } else { throw std::invalid_argument("[COTE]: Wrong parameter comes!"); }
 
         // Find the final inliers
         translation_inliers_ = teaser::utils::findNonzero<bool>(translation_inliers_mask_);
@@ -937,7 +911,7 @@ public:
 
     void setInliers(
             const Eigen::Matrix<double, 3, Eigen::Dynamic> &raw, pcl::PointCloud<PointType> &inliers,
-            const vector<int> &idx_inliers) {
+            const std::vector<int> &idx_inliers) {
         inliers.clear();
         inliers.reserve(idx_inliers.size());
 
@@ -959,7 +933,7 @@ public:
         setInliers(tgt_matched, target_inliers, final_inliers_);
     }
 
-    vector<int> getFinalInliersIndices() {
+    std::vector<int> getFinalInliersIndices() {
         return final_inliers_;
     }
 
