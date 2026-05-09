@@ -22,7 +22,7 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(OpenCV REQUIRED)
 find_package(OpenCV REQUIRED QUIET)
 find_package(OpenMP)
-find_package(PCL 1.8 REQUIRED)
+find_package(PCL 1.10 REQUIRED)
 find_package(Boost 1.54 REQUIRED)
 find_package(Eigen3 3.2 QUIET REQUIRED NO_MODULE)
 find_package(catkin QUIET)
@@ -75,7 +75,7 @@ add_executable(run_example examples/run_global_registration.cpp ${teaser_src})
 
 target_link_libraries(run_example
         PUBLIC
-        ${PCL_LIBRARY_DIRS}
+        ${PCL_LIBRARIES}
         ${catkin_LIBRARIES}
         stdc++fs
         pmc::pmc
