@@ -1,25 +1,35 @@
-# Quatro 
+<div align="center">
 
-Official page of *"A Single Correspondence Is Enough: Robust Global Registration to Avoid Degeneracy in Urban Environments"*, which is accepted @ ICRA'22. **NOTE that this repository is the re-implementation, so it is not exactly the same as the original version**.   
+<h1>Quatro</h1>
 
-#### [[Video]](https://www.youtube.com/results?search_query=A+single+correpsondence+is+enough) [[Priprint Paper]](https://arxiv.org/abs/2203.06612)
+<p>
+  <a href="https://www.youtube.com/results?search_query=A+single+correpsondence+is+enough">[Video]</a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://arxiv.org/abs/2203.06612">[Priprint Paper]</a>
+</p>
 
+<p align="center"><img src="materials/README_demo_v2.gif" alt="Quatro demo" width="95%"/></p>
 
+<p><strong><em>Robust global registration to avoid degeneracy in urban environments.</em></strong></p>
 
-## Demo
+</div>
 
-![](materials/README_demo_v2.gif)
+Official page of *"A Single Correspondence Is Enough: Robust Global Registration to Avoid Degeneracy in Urban Environments"*, which is accepted @ ICRA'22. **NOTE that this repository is the re-implementation, so it is not exactly the same as the original version**.
 
 > [!IMPORTANT]
 > **News (May 21, 2024)** &nbsp;&middot;&nbsp; Quatro is now fully supported by the [TEASER++ library](https://github.com/MIT-SPARK/TEASER-plusplus).
 >
 > If you want a **ROS-free** version, please head over to [TEASER++](https://github.com/MIT-SPARK/TEASER-plusplus). :wave:
 
-## NEWS (Jan. 27 2023)
+______________________________________________________________________
+
+## :loudspeaker: NEWS (Jan. 27 2023)
 - An improved version is under review in the International Journal of Robotics Research~(IJRR)
 - The codes will be refactored and then updated soon!
 
-## Characteristics
+______________________________________________________________________
+
+## :sparkles: Characteristics
 
 * Single hpp file (`include/quatro.hpp`). It requires other hpp files, though :sweat_smile:
 * Intuitive usage based on the hierarchical inheritance of the `Registration` class in [Point Cloud Library (PCL)](https://pointclouds.org/). Quatro can be used as follows: 
@@ -58,9 +68,9 @@ KITTI dataset                  |  NAVER LABS Loc. dataset
 - [ ] Add preprint paper
 - [ ] Add diverse examples for other sensor configuration
 
----
+______________________________________________________________________
 
-## Contents
+## :books: Contents
 1. [Test Env.](#Test-Env.)
 0. [How to Build](#How-to-Build)
 0. [How to Run Quatro](#How-to-Run-Quatro)
@@ -72,7 +82,9 @@ The code is tested successfully at
 * Linux 18.04 LTS
 * ROS Melodic
 
-## How to Build
+______________________________________________________________________
+
+## :hammer: How to Build
 
 ### ROS Setting
 1. Install the following dependencies
@@ -82,7 +94,7 @@ sudo apt install cmake libeigen3-dev libboost-all-dev
 ```
 
 2. Install [ROS](http://torch.ch/docs/getting-started.html) on a machine.
-3. Then, build Quatro package and enjoy! :) We use [catkin tools](https://catkin-tools.readthedocs.io/en/latest/) 
+3. Then, build Quatro package and enjoy! :) We use [catkin tools](https://catkin-tools.readthedocs.io/en/latest/) 
 
 ```
 mkdir -p ~/catkin_ws/src
@@ -94,7 +106,9 @@ catkin build quatro
 
 **Note** Quatro requires `pmc` library, which is automatically installed via `3rdparty/find_dependencies.cmake`. 
 
-## How to Run Quatro
+______________________________________________________________________
+
+## :rocket: How to Run Quatro
 
 ### Prerequisites
 
@@ -136,8 +150,9 @@ Visualized inner pipelines        |  Source (red), target (green), and the estim
 :-------------------------:|:-------------------------:
 ![](materials/quatro_inner.png) |  ![](materials/quatro_output.png)
 
+______________________________________________________________________
 
-## Citation
+## :page_facing_up: Citation
 
 If our research has been helpful, please cite the below papers:
 
@@ -175,10 +190,14 @@ If our research has been helpful, please cite the below papers:
     }
 ```
 
-## Acknowledgment
+______________________________________________________________________
+
+## :pray: Acknowledgment
 This work was supported by the Industry Core Technology Development Project, 20005062, Development of Artificial Intelligence Robot Autonomous Navigation Technology for Agile Movement in Crowded Space, funded by the Ministry of Trade, Industry & Energy (MOTIE, Republic of Korea) and by the research project “Development of A.I. based recognition, judgment and control solution for autonomous vehicle corresponding to atypical driving environment,” which is financed from the Ministry of Science and ICT (Republic of Korea) Contract No. 2019-0-00399. The student was supported by the BK21 FOUR from the Ministry of Education (Republic of Korea).
 
-## License
+______________________________________________________________________
+
+## :scroll: License
 <a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-nc-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/">Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License</a>.
 
 
