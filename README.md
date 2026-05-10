@@ -10,9 +10,10 @@ Official page of *"A Single Correspondence Is Enough: Robust Global Registration
 
 ![](materials/README_demo_v2.gif)
 
-## NEWS (May 21 2024)
-
-Now, Quatro is fully supported by [TEASER++ library](https://github.com/MIT-SPARK/TEASER-plusplus). Those who want a ROS-free version should visit that site, please :)
+> [!IMPORTANT]
+> **News (May 21, 2024)** &nbsp;&middot;&nbsp; Quatro is now fully supported by the [TEASER++ library](https://github.com/MIT-SPARK/TEASER-plusplus).
+>
+> If you want a **ROS-free** version, please head over to [TEASER++](https://github.com/MIT-SPARK/TEASER-plusplus). :wave:
 
 ## NEWS (Jan. 27 2023)
 - An improved version is under review in the International Journal of Robotics Research~(IJRR)
